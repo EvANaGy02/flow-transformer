@@ -133,8 +133,13 @@ class CICFlowMeterTool(Tool):
                 f"CICFlowMeter generated an empty CSV for {pcap_file.name}"
             )
 
-        if "Label" in df.columns:
-            df = df.drop(columns=["Label"])
+        label_columns = [
+            column
+            for column in df.columns
+            if column.casefold() == "label"
+        ]
+        if label_columns:
+            df = df.drop(columns=label_columns)
 
         # Spaltennamen bereinigen
         df.columns = df.columns.str.strip()

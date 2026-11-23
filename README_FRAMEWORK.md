@@ -1,432 +1,245 @@
-# PCAP Flow Transformation Framework
+# Detailed Framework Guide
 
-## Overview
+This guide covers how to lay out your project data and run the installed
+`pcap-transformer` Python package. For package installation and external tool
+requirements, see the main [README](README.md).
 
-This framework converts network traffic stored as PCAP files into flow-based datasets. It supports two main operation modes:
+## Project and data layout
 
-1. **Tool conversion**
-   Converts PCAP files into flow records using a selected network analysis tool (e.g., Zeek, Argus, CICFlowMeter).
+The `Transform` job reads source captures from:
 
-2. **Dataset format conversion**
-   Converts PCAP files into the feature format of a specific intrusion detection dataset (e.g., UNSW-NB15, BoT-IoT, ToN-IoT, CSE-CIC-IDS2018).
-   This mode automatically selects the required flow extraction tool and applies the corresponding feature transformation.
-
-The framework additionally supports:
-
-* PCAP splitting for large files
-* Automatic conversion from CSV to Parquet
-* Binary or multiclass labeling
-* Merging multiple flow files into a single dataset
-* Preview generation with sampled flows
-* Incremental processing (existing Parquet files are skipped)
-
----
-
-# Installation
-
-## Requirements
-
-* Python == 3.12
-* Virtual environment recommended
-
-Example:
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
+```text
+<data_dir>/pcap/<src_dataset>/**/*.pcap
 ```
 
-Install dependencies:
+For example:
 
-```bash
-pip install -r requirements.txt
-```
-
-The external flow extraction tools must also be installed:
-
-* Zeek
-* Argus
-* CICFlowMeter
-* NexusFlowMeter
-
-The tools must be available in the system path or configured inside their corresponding tool classes.
-
-**For further installation guide please refere to the 
-README.md file in the same folder!**
-
----
-
-# Directory Structure
-
-The framework expects the following data structure:
-
-```
-project/
-│
-├── data/
-│   ├── pcap/
-│   │   └── DATASET_NAME/
-│   │       ├── traffic1.pcap
-│   │       └── traffic2.pcap
-│   │
-│   └── flow/
-│       ├── tool_convertion/
-│       └── dataset_format_convertion/
-│
-│
-└── transforming_framework/
-```
-
----
-
-# How to use the Framework
-
-The framework has two modes:
-
-* **Tool conversion**
-* **Dataset format conversion**
-
-The mode is selected by providing either `tools` or `goal_datasets`.
-
-Both parameters cannot be used at the same time.
-
----
-
-# 1. Tool Conversion Mode
-
-Tool conversion only creates flow files from PCAP files.
-
-Supported tools:
-
-* `zeek`
-* `argus`
-* `cicflowmeter`
-* `nexusflowmeter`
-* `ownprep`
-* `nfstream`
-
-## Example
-
-Convert ToN-IoT PCAP files using Zeek:
-
-```python
-from core.transform import Transform
-
-transformation = Transform(
-    src_dataset="ToN_IoT",
-    tools="zeek"
-)
-
-transformation.run()
-```
-
-Output:
-
-```
-data/
-└── flow/
-    └── tool_convertion/
+```text
+my_project/
+├── main.py
+└── data/
+    └── pcap/
         └── ToN_IoT/
-            └── zeek/
-                ├── traffic1.parquet
-                ├── traffic2.parquet
-                └── merged/
-                    └── multiclass/
-                        └── merged.parquet
+            ├── normal.pcap
+            └── DDoS_attack.pcap
 ```
 
----
+Use the source directory name as the `src_dataset` value. The framework finds
+PCAP files recursively inside that directory.
 
-## Multiple Tools
+### How `data_dir` is resolved
 
-Several tools can be executed sequentially:
+`data_dir` defaults to `"data"`, which is resolved relative to the **current
+working directory** (the directory from which you run Python). It is not
+automatically resolved relative to the installed package or the main script.
+For example, if `main.py` is in the project root and you run it from that
+directory, the default points to `my_project/data`. If you run Python from a
+different directory, the default points to a different `data` directory.
+
+To make the location independent of the shell's current directory, pass an
+explicit path derived from `__file__`:
 
 ```python
-transformation = Transform(
-    src_dataset="UNSW_NB15",
-    tools=[
-        "zeek",
-        "argus"
-    ]
-)
+from pathlib import Path
+from transforming_framework import Transform
 
-transformation.run()
-```
+PROJECT_ROOT = Path(__file__).resolve().parent
+DATA_DIR = PROJECT_ROOT / "data"
 
----
-
-# 2. Dataset Format Conversion Mode
-
-Dataset conversion transforms PCAP files directly into the feature format of a target dataset.
-
-The framework automatically chooses:
-
-| Dataset         | Flow Tool    | Transformer              |
-| --------------- | ------------ | ------------------------ |
-| ToN-IoT         | Zeek         | ToNIoTTransformer        |
-| BoT-IoT         | Argus        | BoTIoTTransformer        |
-| UNSW-NB15       | Argus + Zeek | UNSWNB15Transformer      |
-| CSE-CIC-IDS2018 | CICFlowMeter | CSECICIDS2018Transformer |
-
----
-
-## Example: Convert PCAP to UNSW-NB15 format
-
-```python
-from core.transform import Transform
-
-transformation = Transform(
-    src_dataset="UNSW_NB15",
-    goal_datasets="UNSW_NB15"
-)
-
-transformation.run()
-```
-
-The framework will:
-
-1. Run Argus on the PCAP files
-2. Run Zeek on the same PCAP files
-3. Match corresponding Argus and Zeek output files
-4. Combine both sources
-5. Select UNSW-NB15 features
-6. Create transformed Parquet files
-7. Label and merge the final dataset
-
-Output:
-
-```
-data/
-└── flow/
-    └── dataset_format_convertion/
-        └── UNSW_NB15/
-            └── UNSW_NB15/
-                ├── argus/
-                │   └── traffic.parquet
-                │
-                ├── zeek/
-                │   └── traffic.parquet
-                │
-                └── transformed/
-                    ├── traffic_transformed.parquet
-                    └── merged/
-                        └── binary/
-                            └── merged.parquet
-```
-
----
-
-# PCAP Splitting
-
-Large PCAP files are automatically split before processing.
-
-Default:
-
-```python
-chunk_size_packets=1_000_000
-```
-
-Example:
-
-```python
-transformation = Transform(
+job = Transform(
     src_dataset="ToN_IoT",
     goal_datasets="ToN_IoT",
-    chunk_size_packets=500000
+    data_dir=DATA_DIR,
 )
-
-transformation.run()
+job.run()
 ```
 
-A PCAP:
-
-```
-large_capture.pcap
-```
-
-can become:
-
-```
-large_capture_chunks_size_500000/
-
-├── chunk_00000.pcap
-├── chunk_00001.pcap
-└── chunk_00002.pcap
-```
-
-Each chunk is processed separately.
-
----
-
-# Labeling
-
-By default, generated datasets are labeled binary.
-
-## Binary Labels
+This example assumes `main.py` is in the project root. If it is in
+`my_project/scripts/main.py`, use
+`Path(__file__).resolve().parents[1] / "data"` instead. An absolute path can
+also be passed directly:
 
 ```python
-transformation = Transform(
-    src_dataset="BoT_IoT",
-    goal_datasets="BoT_IoT",
-    label_binary=True
-)
-
-transformation.run()
-```
-
-Output:
-
-```
-merged/
-└── binary/
-    └── merged.parquet
-```
-
----
-
-## Multiclass Labels
-
-```python
-transformation = Transform(
-    src_dataset="BoT_IoT",
-    goal_datasets="BoT_IoT",
-    label_binary=False
-)
-
-transformation.run()
-```
-
-Output:
-
-```
-merged/
-└── multiclass/
-    └── merged.parquet
-```
-
----
-
-## Disable Labeling
-
-For unlabeled flow generation:
-
-```python
-transformation = Transform(
+job = Transform(
     src_dataset="ToN_IoT",
     goal_datasets="ToN_IoT",
-    do_label=False
+    data_dir=r"D:\datasets\my_project\data",
 )
-
-transformation.run()
 ```
 
-Output:
+The framework creates `<data_dir>/flow/` for its outputs. Keep input captures
+under `<data_dir>/pcap/`; do not put PCAPs in the package installation
+directory.
 
-```
-merged/
-└── no_label/
-    └── merged.parquet
-```
+## Run a job from a main script
 
----
-
-# Merge and Preview Generation
-
-After transformation, all Parquet files are merged automatically.
-
-Generated files:
-
-```
-merged/
-├── merged.parquet
-├── merged_preview.parquet
-└── columns
-```
-
-`merged_preview.parquet` contains:
-
-* up to 50 samples per label (labeling enabled)
-* otherwise 50 random samples
-
-This allows quick inspection before loading the complete dataset.
-
----
-
-# UNSW-NB15 Special Handling
-
-UNSW-NB15 requires two flow sources:
-
-```
-UNSW_NB15/
-├── argus/
-│   └── file_name.parquet
-│
-└── zeek/
-    └── file_name.parquet
-```
-
-The framework matches files by filename:
-
-```
-argus:
-normal_attack1.parquet
-
-zeek:
-normal_attack1.parquet
-```
-
-Only matching pairs are transformed.
-
-If a corresponding file does not exist in both directories, transformation is skipped.
-
----
-
-# Incremental Processing
-
-The framework checks existing Parquet files.
-
-Already processed files are skipped:
-
-```
-Process Pcaps:
-Parquet already exists for traffic.pcap, skipping...
-```
-
-This allows interrupted transformations to continue without restarting.
-
----
-
-# Main Configuration Parameters
-
-| Parameter            | Description                        | Default   |
-| -------------------- | ---------------------------------- | --------- |
-| `src_dataset`        | Source PCAP dataset name           | required  |
-| `tools`              | Flow extraction tools              | None      |
-| `goal_datasets`      | Target dataset format              | None      |
-| `chunk_size_packets` | Packets per PCAP chunk             | 1,000,000 |
-| `max_size_pcap`      | Maximum PCAP size before splitting | 1GB       |
-| `label_binary`       | Binary/multiclass labeling         | True      |
-| `do_label`           | Enable labeling                    | True      |
-
----
-
-# Example Complete Script
+Create `main.py` in your project and use the public package import:
 
 ```python
-from core.transform import Transform
+from pathlib import Path
+from transforming_framework import Transform
+
+
+def main():
+    project_root = Path(__file__).resolve().parent
+    data_dir = project_root / "data"
+
+    job = Transform(
+        src_dataset="ToN_IoT",
+        goal_datasets="ToN_IoT",
+        data_dir=data_dir,
+    )
+    job.run()
 
 
 if __name__ == "__main__":
-
-    transformation = Transform(
-        src_dataset="ToN_IoT",
-        goal_datasets="ToN_IoT",
-        chunk_size_packets=1_000_000,
-        label_binary=True,
-        do_label=True
-    )
-
-    transformation.run()
+    main()
 ```
 
-This will generate a ready-to-use labeled flow dataset in Parquet format.
+Run it from PowerShell with:
+
+```powershell
+python .\main.py
+```
+
+The same explicit `data_dir` works if you launch the script from another
+working directory.
+
+## Choose a processing mode
+
+Pass exactly one of `tools` and `goal_datasets`.
+
+### Tool conversion
+
+This mode extracts flows using the selected tool(s), but does not transform
+them into a target feature format:
+
+```python
+job = Transform(
+    src_dataset="ToN_IoT",
+    tools=["zeek", "argus"],
+    data_dir=DATA_DIR,
+)
+job.run()
+```
+
+The supported tool names are `zeek`, `argus`, `cicflowmeter`,
+`nexusflowmeter`, `ownprep`, and `nfstream`. A string selects one tool; a list
+selects several tools to run sequentially.
+
+For the packet filtering, flow grouping, and feature calculations performed
+by `ownprep`, see [README_OWNPREP.md](README_OWNPREP.md).
+
+### Dataset format conversion
+
+The framework selects an extractor and transformer from the target dataset:
+
+| Target format | Extractor(s) | Transformer |
+| --- | --- | --- |
+| `ToN_IoT` | Zeek | ToN-IoT |
+| `BoT_IoT` | Argus | BoT-IoT |
+| `UNSW_NB15` | Argus and Zeek | UNSW-NB15 |
+| `CSE_CIC_IDS2018` | CICFlowMeter | CSE-CIC-IDS2018 |
+
+Example:
+
+```python
+job = Transform(
+    src_dataset="UNSW_NB15",
+    goal_datasets="UNSW_NB15",
+    data_dir=DATA_DIR,
+)
+job.run()
+```
+
+The UNSW-NB15 transformation requires Argus and Zeek Parquet files with the
+same filename stem. The framework pairs matching files and requires at least
+one matching pair.
+
+## Where outputs are written
+
+The output root is always `<data_dir>/flow/`.
+
+Tool conversion:
+
+```text
+<data_dir>/flow/tool_convertion/<src_dataset>/<tool>/
+├── <capture>.parquet
+└── merged/
+    ├── merged.parquet
+    ├── merged_preview.parquet
+    └── columns
+```
+
+Dataset conversion:
+
+```text
+<data_dir>/flow/dataset_format_convertion/<src_dataset>/<goal_dataset>/
+├── <capture>.parquet           # intermediate extractor output
+└── transformed/
+    ├── <capture>_transformed.parquet
+    └── merged/
+        ├── merged.parquet
+        ├── merged_preview.parquet
+        └── columns
+```
+
+For UNSW-NB15, the intermediate files are arranged by extractor:
+
+```text
+<data_dir>/flow/dataset_format_convertion/UNSW_NB15/UNSW_NB15/
+├── argus/
+│   └── <capture>.parquet
+├── zeek/
+│   └── <capture>.parquet
+└── transformed/
+    └── ...
+```
+
+The path components `tool_convertion` and `dataset_format_convertion` use
+these spellings in the current implementation.
+
+## Unlabeled merged files
+
+The framework never assigns labels and does not read or require ground-truth
+files. Flows are merged as extracted or transformed. Any existing column
+named `label` or `Label` is excluded from the merged dataset.
+
+The merge step creates:
+
+* `merged.parquet`: merged flow dataset.
+* `merged_preview.parquet`: up to 50 sample rows per input file.
+* `columns`: one output column name per line.
+
+## Large PCAP files and reruns
+
+The job has two PCAP splitting settings:
+
+| Argument | Default | Meaning |
+| --- | --- | --- |
+| `chunk_size_packets` | `1_000_000` | Maximum packets per chunk |
+| `max_size_pcap` | `1_000_000_000` | Split files larger than this many bytes |
+
+When a PCAP exceeds `max_size_pcap`, `editcap` splits it into chunks of up to
+`chunk_size_packets`. Chunks are stored next to the original PCAP in a
+`<capture>_chunks_size_<chunk_size_packets>/` folder. An existing chunk folder
+is reused.
+
+If a flow or transformed Parquet file already exists, that work is skipped
+where possible. Merged files and previews are rebuilt from the available
+Parquet files when the job runs again.
+
+## Common configuration
+
+```python
+Transform(
+    src_dataset="BoT_IoT",       # folder below data_dir/pcap/
+    goal_datasets="BoT_IoT",     # or use tools="argus", not both
+    data_dir="./data",            # project data root
+    chunk_size_packets=1_000_000,
+    max_size_pcap=1_000_000_000,
+)
+```
+
+`data_dir`, `chunk_size_packets`, and `max_size_pcap` can be used in either
+mode.

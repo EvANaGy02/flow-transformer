@@ -8,15 +8,11 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Tuple
 from .. import utils
-from .interfaces import Tool, Label, DatasetTransform
+from .interfaces import Tool, DatasetTransform
 from ..dataset_transform.BoT_IoT_transform import BoTIoTTransformer
 from ..dataset_transform.CSE_CIC_IDS2018_transform import CSECICIDS2018Transformer
 from ..dataset_transform.ToN_IoT_transform import ToNIoTTransformer
 from ..dataset_transform.UNSW_NB15_transform import UNSWNB15Transformer
-from ..label_dataset.BoT_IoT_label import BoTIoTLabel
-from ..label_dataset.CSE_CIC_IDS2018_label import CSECICIDS2018Label
-from ..label_dataset.ToN_IoT_label import ToNIoTLabel
-from ..label_dataset.UNSW_NB15_label import UNSWNB15Label
 
 
 class Transform:
@@ -25,8 +21,6 @@ class Transform:
                  goal_datasets: list | str = None,
                  chunk_size_packets: int = 1_000_000, # 1_000 - 2_000 for argus_old_version -> only half of data is lost else <1_000_000
                  max_size_pcap: int = 1_000_000_000, # max 1GB
-                 label_binary = True,
-                 do_label = True,
                  data_dir: str | Path = "data") -> None:
         # max_size_pcap: max size pcap without chunking, default 1GB
         if src_dataset is None:
@@ -50,10 +44,6 @@ class Transform:
         utils.path_exists(self.output_path)
         self.chunk_size = chunk_size_packets
         self.max_size_pcap = max_size_pcap
-        self.label_binary = label_binary
-        self.do_label = do_label
-        if not self.do_label:
-            self.label_binary = False
 
     def run(self) -> None:
         if self.mode == "tools":
@@ -76,7 +66,7 @@ class Transform:
                     goal_dataset=goal_dataset
                 )
                 self.tools = []
-        self.label_and_merge(self.output_path)
+        self.merge_outputs()
 
     def process_pcaps(self, output_path: Path, tool: Tool = None, goal_dataset: str = None) -> None:
         pcaps = list(self.get_pcaps(src_dataset=self.src_datasets))
@@ -289,120 +279,27 @@ class Transform:
                 index=False
             )
 
-    def label_and_merge(self, output_path) -> None:
-        print("Merging and Labelling...")
-        if self.do_label:
-            if self.src_datasets == "ToN_IoT":
-                labeler = ToNIoTLabel()
-            elif self.src_datasets == "BoT_IoT":
-                labeler = BoTIoTLabel()
-            elif self.src_datasets == "UNSW_NB15":
-                labeler = UNSWNB15Label()
-            elif self.src_datasets == "CSE_CIC_IDS2018":
-                labeler = CSECICIDS2018Label()
-            else:
-                raise Exception("Unknown dataset/s given!")
-        else:
-            labeler = None
+    def merge_outputs(self) -> None:
+        print("Merging flow files...")
         if self.mode == "tools":
             for tool in self.tools:
-                self.iterate_label_merge(output_path / tool.tool_name, labeler)
+                self.merge_parquet_files(self.output_path / tool.tool_name)
         elif self.mode == "datasets":
             for dataset in self.goal_datasets:
-                self.iterate_label_merge(self.output_path / dataset / "transformed", labeler)
-                #self.iterate_label_merge(self.output_path / dataset, labeler)
+                self.merge_parquet_files(
+                    self.output_path / dataset / "transformed"
+                )
         else:
             raise Exception("Unknown mode given!")
 
-    def iterate_label_merge_old(self, data_dir: Path, labeler: Label | None) -> None:
-        utils.path_exists(data_dir)
-        if self.do_label:
-            if self.label_binary:
-                extension = "binary"
-            else:
-                extension = "multiclass"
-            merged_path = data_dir / "merged" / extension
-        else:
-            merged_path = data_dir / "merged" / "no_label"
-
-        utils.path_exists(merged_path)
-        output_file = merged_path / "merged.parquet"
-        if output_file.exists():
-            output_file.unlink()
-        dfs = []
-        dfs_sample = []
-        print(f"Search directory: {data_dir.resolve()}")
-        for parquet in data_dir.rglob("*.parquet"):
-            print(f"parquet found: {parquet.name}")
-            if parquet.name == "merged.parquet" or parquet.name =="merged_preview.parquet":
-                continue
-            print(f"Processing {parquet.name}")
-            try:
-                if utils.is_real_parquet(parquet):
-                    df_parquet = pd.read_parquet(parquet)
-                else:
-                    df_parquet = pd.read_csv(parquet, low_memory=False, on_bad_lines="warn")
-                    df_parquet.columns = df_parquet.columns.str.strip()
-                    df_parquet.to_parquet(parquet, index=False)
-                if self.do_label:
-                    df_parquet = labeler.labelling(df=df_parquet, name=parquet.name, label_binary=self.label_binary)
-                    #print(df_parquet.head())
-                # Vorschau Datei von jeden Label 50 Zeilen order allgemein 50 Zeilen
-                if self.do_label:
-                    for label, group in df_parquet.groupby("label"):
-                        n = min(len(group), 50)
-                        dfs_sample.append(group.sample(n=n, random_state=42))
-                else:
-                    n = min(len(df_parquet), 50)
-                    dfs_sample.append(df_parquet.sample(n=n, random_state=42))
-                dfs.append(df_parquet)
-                #sample_df.to_csv(merged_path / "merged_preview.csv", index=False)
-                #df_parquet.to_parquet(output_file, index=False)
-            except Exception as e:
-                print(f"Skipping {parquet.name} due to error: {e}")
-        if not dfs:
-            raise ValueError(f"No parquet files found in {data_dir}!")
-        merged_df = pd.concat(dfs, ignore_index=True)
-        merged_df.columns.to_series().to_csv(merged_path / "columns", index=False, header=False)
-        if self.do_label:
-            print(f"Label of merged dataset is {merged_df["label"].unique()}")
-
-        if "Dport" in merged_df.columns:
-            merged_df["Dport"] = (
-                pd.to_numeric(merged_df["Dport"], errors="coerce")
-                .astype("Int64")
-            )
-        if "Sport" in merged_df.columns:
-            merged_df["Sport"] = merged_df["Sport"].astype("string")
-        merged_df.to_parquet(output_file, index=False)
-        merged_preview_df = pd.concat(dfs_sample).reset_index(drop=True)
-        if "Dport" in merged_preview_df.columns:
-            merged_preview_df["Dport"] = (
-                pd.to_numeric(merged_preview_df["Dport"], errors="coerce")
-                .astype("Int64")
-            )
-        if "Sport" in merged_preview_df.columns:
-            merged_preview_df["Sport"] = merged_preview_df["Sport"].astype("string")
-        if self.do_label:
-            print(f"Label of merged preview dataset is {merged_preview_df["label"].unique()}")
-        merged_preview_df.to_parquet(merged_path / "merged_preview.parquet", index=False)
-
-    def iterate_label_merge( self,data_dir: Path,labeler: Label | None) -> None:
+    def merge_parquet_files(self, data_dir: Path) -> None:
         import pandas as pd
         import pyarrow as pa
         import pyarrow.parquet as pq
 
         utils.path_exists(data_dir)
 
-        # --------------------------------------------------------------
-        # 1. Ausgabeordner und Dateipfade
-        # --------------------------------------------------------------
-        if self.do_label:
-            extension = "binary" if self.label_binary else "multiclass"
-            merged_path = data_dir / "merged" / extension
-        else:
-            merged_path = data_dir / "merged" / "no_label"
-
+        merged_path = data_dir / "merged"
         utils.path_exists(merged_path)
 
         output_file = merged_path / "merged.parquet"
@@ -429,15 +326,8 @@ class Transform:
                 f"No parquet files found in {data_dir}!"
             )
 
-        if self.do_label and labeler is None:
-            raise ValueError(
-                "self.do_label=True, aber labeler ist None."
-            )
-
-        # --------------------------------------------------------------
-        # 2. Gemeinsame Funktion zur Vorbereitung jeder Eingabedatei
-        # --------------------------------------------------------------
         string_fallback_columns = set()
+
         def load_and_prepare(parquet: Path) -> pd.DataFrame:
             if utils.is_real_parquet(parquet):
                 df = pd.read_parquet(parquet)
@@ -454,25 +344,13 @@ class Transform:
                 # wie in der ursprünglichen Implementierung.
                 df.to_parquet(parquet, index=False)
 
-            # Labels erzeugen
-            if self.do_label:
-                df = labeler.labelling(
-                    df=df,
-                    name=parquet.name,
-                    label_binary=self.label_binary,
-                )
-
-                if "label" not in df.columns:
-                    raise ValueError(
-                        f"Keine 'label'-Spalte in {parquet.name}"
-                    )
-
-                # Für alle Dateien denselben Typ für Label erzwingen
-                df["label"] = (
-                    df["label"]
-                    .astype("string")
-                    .str.strip()
-                )
+            label_columns = [
+                column
+                for column in df.columns
+                if column.casefold() == "label"
+            ]
+            if label_columns:
+                df = df.drop(columns=label_columns)
 
             # Bestehende Typnormalisierung beibehalten
             if "Dport" in df.columns:
@@ -495,9 +373,6 @@ class Transform:
                     df[col] = df[col].astype("string")
             return df
 
-        # --------------------------------------------------------------
-        # 3. ERSTER DURCHLAUF: Schema aller Dateien erfassen
-        # --------------------------------------------------------------
         schemas = []
 
         print("\n========== SCHEMA SCAN ==========")
@@ -520,11 +395,6 @@ class Transform:
                 # Die Feldtypen und Spalten werden separat vereinheitlicht.
                 schemas.append(table.schema.remove_metadata())
 
-                if self.do_label:
-                    print(
-                        "  Klassen:",
-                        df["label"].nunique(dropna=True),
-                    )
                 del table
                 del df
 
@@ -586,8 +456,8 @@ class Transform:
             print("\nAls String gespeicherte Konfliktspalten:",
                 sorted(string_fallback_columns))
 
-        except Exception as e:
-            print(f"Fehler: {e}")
+        except Exception as exc:
+            raise RuntimeError("Could not build a common Parquet schema") from exc
 
         # Besonders nützlich, um die Typen numerischer Features zu prüfen
         print("\nGemeinsame Spaltentypen:")
@@ -602,8 +472,6 @@ class Transform:
         rows_written = 0
         dfs_sample = []
 
-        labels_before_write = set()
-
         try:
             writer = pq.ParquetWriter(output_file,output_schema)
             for index, parquet in enumerate(input_files, start=1):
@@ -613,32 +481,14 @@ class Transform:
                 )
                 try:
                     df = load_and_prepare(parquet)
-                    if self.do_label:
-                        labels_before_write.update(df["label"].dropna().tolist())
-                        print(
-                            "Labels:",
-                            sorted(
-                                df["label"]
-                                .dropna()
-                                .unique()
-                                .tolist()
-                            ),
-                        )
 
                     # ----------------------------------------------
                     # Preview-Samples vorbereiten
                     # ----------------------------------------------
-                    if self.do_label:
-                        for _, group in df.groupby("label",dropna=False, ):
-                            n = min(len(group), 50)
-                            if n > 0:
-                                dfs_sample.append(
-                                    group.sample( n=n,random_state=42,))
-                    else:
-                        n = min(len(df), 50)
-                        if n > 0:
-                            dfs_sample.append(
-                                df.sample(n=n, random_state=42))
+                    n = min(len(df), 50)
+                    if n > 0:
+                        dfs_sample.append(
+                            df.sample(n=n, random_state=42))
 
                     # ----------------------------------------------
                     # DataFrame in Arrow-Tabelle umwandeln
@@ -662,24 +512,6 @@ class Transform:
                     # etwa von 73.428571 nach 73.
                     table = table.cast(output_schema,safe=True,)
 
-                    # Kontrollieren, ob der Cast die Labels verändert hat
-                    if self.do_label:
-                        labels_df = set(df["label"].dropna().tolist())
-                        labels_arrow = set(
-                            value
-                            for value in table
-                            .column("label")
-                            .to_pylist()
-                            if value is not None
-                        )
-
-                        if labels_df != labels_arrow:
-                            raise ValueError(
-                                f"Labels unterscheiden sich nach dem "
-                                f"Casting in {parquet.name}: "
-                                f"DataFrame={labels_df}, "
-                                f"Arrow={labels_arrow}"
-                            )
                     # Tabelle schreiben
                     writer.write_table(table)
                     rows_written += table.num_rows
@@ -725,17 +557,6 @@ class Transform:
                 merged_preview_df["Sport"] = (
                     merged_preview_df["Sport"].astype("string")
                 )
-            if self.do_label:
-                print(
-                    "\nLabels in merged preview:",
-                    sorted(
-                        merged_preview_df["label"]
-                        .dropna()
-                        .unique()
-                        .tolist()
-                    ),
-                )
-
             merged_preview_df.to_parquet(preview_file,index=False,)
             del merged_preview_df
 
@@ -757,27 +578,4 @@ class Transform:
                 f"{rows_in_output} in merged.parquet."
             )
 
-        if self.do_label:
-            labels_in_output = set()
-
-            for batch in parquet_file.iter_batches(columns=["label"],batch_size=250_000):
-                labels_in_output.update(
-                    value
-                    for value in batch.column(0).to_pylist()
-                    if value is not None
-                )
-            missing_labels = (labels_before_write - labels_in_output)
-            unexpected_labels = (labels_in_output - labels_before_write)
-
-            print("Labels before writing:", sorted(labels_before_write))
-            print("Labels in merged.parquet:",sorted(labels_in_output))
-            print("Missing labels:", sorted(missing_labels))
-            print("Unexpected labels:", sorted(unexpected_labels))
-
-            if missing_labels or unexpected_labels:
-                raise ValueError(
-                    "Label-Prüfung fehlgeschlagen. "
-                    f"Fehlend: {sorted(missing_labels)}; "
-                    f"unerwartet: {sorted(unexpected_labels)}."
-                )
         print(f"\nSuccessfully created merged dataset: {output_file}")

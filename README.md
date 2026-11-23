@@ -4,6 +4,14 @@
 files and transforming them into the feature formats used by ToN-IoT, BoT-IoT,
 UNSW-NB15, and CSE-CIC-IDS2018 or by using different flow extraction external tools.
 
+## Windows and WSL
+
+Some extractors and their external commands are primarily designed for Linux.
+Native Windows support therefore depends on the selected extractor and whether
+all required command-line programs are available through `PATH`.
+Please use a LIínux OS or WSL for Windows.
+
+For example, `ownprep` uses PyShark and external programs.
 ## Installation
 
 Python 3.12 or later is required:
@@ -35,7 +43,7 @@ Install the system programs required by the extractor you use:
 | Zeek | Zeek; `capinfos`, `tcpdump`, and `editcap` for PCAP checks/conversion |
 | Argus | Argus and `ra`; `file` and `editcap` for PCAPNG conversion |
 | CICFlowMeter | A compatible CICFlowMeter wrapper configured with `CICFLOWMETER_BIN` |
-| ownprep | TShark, used by PyShark |
+| ownprep | TShark, used by PyShark; `capinfos`, `tcpdump`, and `editcap` for PCAP checks/conversion |
 | NFStream | System packet-capture libraries as required by NFStream |
 | NexusFlowMeter | The `nexusflowmeter` executable from its optional Python extra |
 
@@ -43,6 +51,7 @@ The CICFlowMeter wrapper must accept a PCAP path and an output directory, and
 write `<pcap-filename>_Flow.csv` into that directory. Check each external
 tool's installation instructions and license. These extractors are generally
 easiest to run on Linux or WSL.
+
 
 ## Where to put the PCAP files
 

@@ -3,7 +3,7 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pcap-transforming-framework"
+name = "pcap-transformer"
 version = "0.1.0"
 description = "Transform PCAP captures into flow and intrusion-detection datasets"
 readme = "README.md"

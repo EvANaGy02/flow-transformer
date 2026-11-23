@@ -9,13 +9,13 @@ CSE-CIC-IDS2018.
 Python 3.12 or later is required.
 
 ```bash
-python -m pip install pcap-transforming-framework
+python -m pip install pcap-transformer
 ```
 
 Install optional Python dependencies for the flow extractor(s) you plan to use:
 
 ```bash
-python -m pip install "pcap-transforming-framework[all]"
+python -m pip install "pcap-transformer[all]"
 ```
 
 Available extras are `nfstream`, `cicflowmeter`, `ownprep`, and

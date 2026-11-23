@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+CFM_DIR="$SCRIPT_DIR/CICFlowMeter"
+NATIVE_DIR="$CFM_DIR/build/install/CICFlowMeter/lib/native"
+
+export CFM_OPTS="${CFM_OPTS:+$CFM_OPTS }-Djava.library.path=$NATIVE_DIR"
+export LD_LIBRARY_PATH="$NATIVE_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+exec "$CFM_DIR/build/install/CICFlowMeter/bin/cfm" "$@"
